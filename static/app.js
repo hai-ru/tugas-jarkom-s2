@@ -183,24 +183,31 @@ async function selectUser(user) {
     });
     event.target.closest('.user-item').classList.add('active');
 
-    // Generate session key if not exists
+    // Generate session key if not exists for this user
     if (!sessionKeys[user.id]) {
-        sessionKeys[user.id] = await cryptoLib.generateAESKey();
+        // Check who initiated first (use consistent key based on ID comparison)
+        const sessionId = [currentUser.id, user.id].sort().join('-');
         
-        // Send encrypted AES key to the user
-        try {
-            const recipientPublicKey = await cryptoLib.importPublicKey(user.publicKey);
-            const encryptedKey = await cryptoLib.encryptAESKey(sessionKeys[user.id], recipientPublicKey);
+        // Generate new key if we're the "first" user (lexicographically)
+        if (currentUser.id < user.id) {
+            sessionKeys[user.id] = await cryptoLib.generateAESKey();
             
-            ws.send(JSON.stringify({
-                type: 'keyExchange',
-                from: currentUser.id,
-                to: user.id,
-                content: encryptedKey
-            }));
-        } catch (error) {
-            console.error('Key exchange error:', error);
+            // Send encrypted AES key to the user
+            try {
+                const recipientPublicKey = await cryptoLib.importPublicKey(user.publicKey);
+                const encryptedKey = await cryptoLib.encryptAESKey(sessionKeys[user.id], recipientPublicKey);
+                
+                ws.send(JSON.stringify({
+                    type: 'keyExchange',
+                    from: currentUser.id,
+                    to: user.id,
+                    content: encryptedKey
+                }));
+            } catch (error) {
+                console.error('Key exchange error:', error);
+            }
         }
+        // Otherwise wait for key from other user
     }
 }
 
