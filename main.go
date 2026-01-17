@@ -19,6 +19,11 @@ func main() {
 	// WebSocket endpoint
 	http.HandleFunc("/ws", hub.HandleWebSocket)
 
+	// Handle favicon request (prevents 404 errors)
+	http.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Serve static files
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/", fs)

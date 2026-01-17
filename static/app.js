@@ -183,31 +183,31 @@ async function selectUser(user) {
     });
     event.target.closest('.user-item').classList.add('active');
 
-    // Generate session key if not exists for this user
-    if (!sessionKeys[user.id]) {
-        // Check who initiated first (use consistent key based on ID comparison)
-        const sessionId = [currentUser.id, user.id].sort().join('-');
+    // Generate and send session key for this user
+    // Use a consistent session ID (sorted pair of user IDs)
+    const sessionId = [currentUser.id, user.id].sort().join('-');
+    
+    if (!sessionKeys[sessionId]) {
+        // Generate a new AES key
+        const aesKey = await cryptoLib.generateAESKey();
+        sessionKeys[sessionId] = aesKey;
         
-        // Generate new key if we're the "first" user (lexicographically)
-        if (currentUser.id < user.id) {
-            sessionKeys[user.id] = await cryptoLib.generateAESKey();
+        // Send encrypted AES key to the other user
+        try {
+            const recipientPublicKey = await cryptoLib.importPublicKey(user.publicKey);
+            const encryptedKey = await cryptoLib.encryptAESKey(aesKey, recipientPublicKey);
             
-            // Send encrypted AES key to the user
-            try {
-                const recipientPublicKey = await cryptoLib.importPublicKey(user.publicKey);
-                const encryptedKey = await cryptoLib.encryptAESKey(sessionKeys[user.id], recipientPublicKey);
-                
-                ws.send(JSON.stringify({
-                    type: 'keyExchange',
-                    from: currentUser.id,
-                    to: user.id,
-                    content: encryptedKey
-                }));
-            } catch (error) {
-                console.error('Key exchange error:', error);
-            }
+            ws.send(JSON.stringify({
+                type: 'keyExchange',
+                from: currentUser.id,
+                to: user.id,
+                content: encryptedKey,
+                sessionId: sessionId
+            }));
+            console.log('Key exchange sent to', user.username);
+        } catch (error) {
+            console.error('Key exchange error:', error);
         }
-        // Otherwise wait for key from other user
     }
 }
 
@@ -215,8 +215,14 @@ async function handleKeyExchange(data) {
     try {
         // Decrypt the AES key with our private key
         const aesKey = await cryptoLib.decryptAESKey(data.content);
-        sessionKeys[data.from] = aesKey;
-        console.log('Session key established with', users[data.from]?.username);
+        const sessionId = data.sessionId || [currentUser.id, data.from].sort().join('-');
+        
+        // Accept the key from the user with the smaller ID to ensure consistency
+        // Or accept if we don't have a key yet
+        if (!sessionKeys[sessionId] || data.from < currentUser.id) {
+            sessionKeys[sessionId] = aesKey;
+            console.log('Session key established with', users[data.from]?.username, 'sessionId:', sessionId);
+        }
     } catch (error) {
         console.error('Key exchange handling error:', error);
     }
@@ -227,14 +233,17 @@ async function sendMessage() {
     if (!message || !selectedUser) return;
 
     try {
+        // Get session key using consistent session ID
+        const sessionId = [currentUser.id, selectedUser.id].sort().join('-');
+        
         // Ensure we have a session key
-        if (!sessionKeys[selectedUser.id]) {
+        if (!sessionKeys[sessionId]) {
             alert('Establishing encryption... Please try again in a moment.');
             return;
         }
 
         // Encrypt the message
-        const encryptedMessage = await cryptoLib.encryptMessage(message, sessionKeys[selectedUser.id]);
+        const encryptedMessage = await cryptoLib.encryptMessage(message, sessionKeys[sessionId]);
 
         // Send to server
         ws.send(JSON.stringify({
@@ -257,13 +266,17 @@ async function sendMessage() {
 
 async function receiveEncryptedMessage(data) {
     try {
+        // Get session key using consistent session ID
+        const sessionId = [currentUser.id, data.from].sort().join('-');
+        
         // Decrypt the message
-        if (!sessionKeys[data.from]) {
-            console.error('No session key for sender:', data.from);
+        if (!sessionKeys[sessionId]) {
+            console.error('No session key for sender:', data.from, 'sessionId:', sessionId);
+            addMessage('System', 'Cannot decrypt message - no encryption key established. Click on the user to establish encryption.', false);
             return;
         }
 
-        const decryptedMessage = await cryptoLib.decryptMessage(data.content, sessionKeys[data.from]);
+        const decryptedMessage = await cryptoLib.decryptMessage(data.content, sessionKeys[sessionId]);
         const sender = users[data.from];
         
         if (sender) {

@@ -89,7 +89,7 @@ func (h *Hub) Run() {
 
 func (h *Hub) handleMessage(msg *Message) {
 	switch msg.Type {
-	case "chat":
+	case "chat", "keyExchange":
 		// Send message to specific recipient
 		h.mutex.RLock()
 		recipient, ok := h.clients[msg.To]
